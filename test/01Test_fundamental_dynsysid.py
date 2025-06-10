@@ -16,27 +16,49 @@ def run_interactive_mode(simulator):
     print("Use the sliders in the PyBullet window to control the robot.")
     print("Close the PyBullet window or press Ctrl+C in the terminal to exit.")
     
+    # Enable GUI elements
+    p.configureDebugVisualizer(p.COV_ENABLE_GUI, 1)
+    
     # Create debug sliders for each joint
     joint_sliders = []
     for i, name in enumerate(robot_config.ACTUATED_JOINT_NAMES):
         slider = p.addUserDebugParameter(
-            name,
+            paramName=f"Joint_{i}_{name}",  # More descriptive name
             rangeMin=-np.pi,
             rangeMax=np.pi,
             startValue=0
         )
         joint_sliders.append(slider)
-        
+        print(f"Created slider for {name} with ID: {slider}")
+    
+    # Give GUI time to initialize
+    time.sleep(0.5)
+    
     try:
+        step_count = 0
         while True:
             # Read slider values
-            target_positions = [p.readUserDebugParameter(slider) for slider in joint_sliders]
+            target_positions = []
+            for i, slider in enumerate(joint_sliders):
+                try:
+                    val = p.readUserDebugParameter(slider)
+                    target_positions.append(val)
+                except:
+                    target_positions.append(0.0)  # Default if reading fails
             
             # Apply positions using the simulator's built-in PD controller
             simulator.set_joint_positions(target_positions)
             
             # Step simulation
             simulator.step_simulation()
+            
+            # Print current positions occasionally
+            if step_count % 240 == 0:  # Every second at 240Hz
+                current_pos = simulator.get_joint_positions()
+                print(f"Current positions: {current_pos}")
+                print(f"Target positions: {target_positions}")
+            
+            step_count += 1
             time.sleep(1./240.)
             
     except p.error:
@@ -120,9 +142,13 @@ def main():
 
     # 2. Set up controller
     num_joints = model.nv
-    Kp = np.diag([100.0] * num_joints)  # Proportional gains
-    Kd = np.diag([10.0] * num_joints)   # Derivative gains
+    Kp = np.diag([20.0] * num_joints)  # Proportional gains
+    Kd = np.diag([5.0] * num_joints)   # Derivative gains
     print(f"Controller gains set. Kp={Kp[0,0]}, Kd={Kd[0,0]}")
+
+    MAX_TORQUE = 50.0  # Nm - adjust based on your robot's specifications
+    print(f"Controller gains set. Kp={Kp[0,0]}, Kd={Kd[0,0]}")
+    print(f"Torque limit set to: ±{MAX_TORQUE} Nm")
 
     # 3. Reset simulator to the start of the validation trajectory
     print("Resetting robot to trajectory start position...")
@@ -131,10 +157,12 @@ def main():
 
     # 4. Run the control loop
     print("Running PD + Gravity Compensation control loop...")
+    print("Running PD + Gravity Compensation control loop...")
     num_steps = len(t_val)
     q_actual_hist = np.zeros_like(q_val)
     v_actual_hist = np.zeros_like(v_val)
     tau_cmd_hist = np.zeros_like(q_val)
+    tau_limited_hist = np.zeros_like(q_val)
 
     for i in range(num_steps):
         # Get current state from simulator
@@ -147,9 +175,16 @@ def main():
         tau_cmd = system_identifier.compute_pd_plus_gravity_control(
             model_identified, data_identified, q_des, v_des, q_act, v_act, Kp, Kd
         )
+        
+        # CRITICAL: Limit torques to prevent instability
+        tau_limited = np.clip(tau_cmd, -MAX_TORQUE, MAX_TORQUE)
+        
+        # Check for large torque commands (debugging)
+        if np.any(np.abs(tau_cmd) > MAX_TORQUE):
+            print(f"Step {i}: Large torque detected! Raw: {tau_cmd}, Limited: {tau_limited}")
 
-        # Apply torques to the robot
-        simulator.apply_joint_torques(tau_cmd)
+        # Apply LIMITED torques to the robot
+        simulator.apply_joint_torques(tau_limited)
 
         # Step simulation
         simulator.step_simulation()
@@ -157,9 +192,10 @@ def main():
         # Record data for plotting
         q_actual_hist[i, :] = q_act
         v_actual_hist[i, :] = v_act
-        tau_cmd_hist[i, :] = tau_cmd
+        tau_cmd_hist[i, :] = tau_cmd      # Raw command
+        tau_limited_hist[i, :] = tau_limited  # Actually applied
         
-        time.sleep(1./240.) # Match simulation frequency if needed
+        time.sleep(1./240.) # Match simulation frequency
 
     print("Control simulation finished.")
 

@@ -74,8 +74,7 @@ def update_model_with_identified_params(model, identified_params_flat):
     print("\nPinocchio model updated with identified inertial parameters.")
     return model
 
-
-def compute_pd_plus_gravity_control(model, data, q_des, v_des, q_act, v_act, Kp, Kd):
+def compute_pd_plus_gravity_control(model, data, q_des, v_des, q_act, v_act, Kp, Kd, max_torque=50.0):
     """
     Computes torque using PD control plus feedforward gravity compensation.
     
@@ -85,11 +84,18 @@ def compute_pd_plus_gravity_control(model, data, q_des, v_des, q_act, v_act, Kp,
         q_des, v_des (np.ndarray): Desired joint position and velocity.
         q_act, v_act (np.ndarray): Actual joint position and velocity.
         Kp, Kd (np.ndarray): Proportional and derivative gains (diagonal matrices).
+        max_torque (float): Maximum torque per joint
         
     Returns:
         np.ndarray: The computed joint torques.
     """
-    # Pinocchio's RNEA requires q, v to compute gravity term correctly
+    # Ensure inputs are numpy arrays
+    q_des = np.array(q_des)
+    v_des = np.array(v_des)
+    q_act = np.array(q_act)
+    v_act = np.array(v_act)
+    
+    # Update kinematics
     pin.forwardKinematics(model, data, q_act, v_act)
 
     # 1. Gravity Compensation Term (Feedforward)
@@ -98,9 +104,21 @@ def compute_pd_plus_gravity_control(model, data, q_des, v_des, q_act, v_act, Kp,
     # 2. PD Control Term (Feedback)
     pos_error = q_des - q_act
     vel_error = v_des - v_act
+    
+    # Limit position error to prevent huge torques from large errors
+    MAX_POS_ERROR = np.pi/2  # 90 degrees max error
+    pos_error = np.clip(pos_error, -MAX_POS_ERROR, MAX_POS_ERROR)
+    
+    # Limit velocity error
+    MAX_VEL_ERROR = 10.0  # rad/s max error
+    vel_error = np.clip(vel_error, -MAX_VEL_ERROR, MAX_VEL_ERROR)
+    
     tau_pd = Kp @ pos_error + Kd @ vel_error
 
     # 3. Total Torque
     tau_command = tau_pd + tau_gravity
+    
+    # 4. Final torque limiting
+    tau_command = np.clip(tau_command, -max_torque, max_torque)
     
     return tau_command

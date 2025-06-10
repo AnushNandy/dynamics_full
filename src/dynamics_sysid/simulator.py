@@ -24,7 +24,7 @@ class PhysicsSimulator:
         self.client_id = p.connect(p.GUI) # Use p.DIRECT for non-GUI mode
         
         # Configure the GUI
-        p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
+        # p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
         p.setGravity(0, 0, -9.81)
         
@@ -97,11 +97,22 @@ class PhysicsSimulator:
         v = np.array([state[1] for state in joint_states])
         return q, v
     
-    def apply_joint_torques(self, torques):
+    def apply_joint_torques(self, torques, max_torque=100.0):
         """
         Applies a raw torque vector to the actuated joints.
         IMPORTANT: This requires disabling the default position/velocity controllers.
+        
+        Args:
+            torques: Array of torques to apply
+            max_torque: Maximum allowed torque per joint (safety limit)
         """
+        # Safety: Clip torques to prevent instability
+        torques_safe = np.clip(torques, -max_torque, max_torque)
+        
+        # Warn if clipping occurred
+        if not np.allclose(torques, torques_safe):
+            print(f"WARNING: Torques clipped! Original: {torques}, Applied: {torques_safe}")
+        
         # Disable the default controllers built into PyBullet
         p.setJointMotorControlArray(
             bodyUniqueId=self.robot_id,
@@ -115,7 +126,7 @@ class PhysicsSimulator:
             bodyUniqueId=self.robot_id,
             jointIndices=self.actuated_joint_ids,
             controlMode=p.TORQUE_CONTROL,
-            forces=torques
+            forces=torques_safe
         )
 
     def step_simulation(self):
