@@ -89,6 +89,34 @@ class PhysicsSimulator:
         """Returns current joint positions."""
         joint_states = p.getJointStates(self.robot_id, self.actuated_joint_ids)
         return np.array([state[0] for state in joint_states])
+    
+    def get_joint_states(self):
+        """Returns current joint positions and velocities."""
+        joint_states = p.getJointStates(self.robot_id, self.actuated_joint_ids)
+        q = np.array([state[0] for state in joint_states])
+        v = np.array([state[1] for state in joint_states])
+        return q, v
+    
+    def apply_joint_torques(self, torques):
+        """
+        Applies a raw torque vector to the actuated joints.
+        IMPORTANT: This requires disabling the default position/velocity controllers.
+        """
+        # Disable the default controllers built into PyBullet
+        p.setJointMotorControlArray(
+            bodyUniqueId=self.robot_id,
+            jointIndices=self.actuated_joint_ids,
+            controlMode=p.VELOCITY_CONTROL,
+            forces=[0] * len(self.actuated_joint_ids)
+        )
+        
+        # Apply the desired torques
+        p.setJointMotorControlArray(
+            bodyUniqueId=self.robot_id,
+            jointIndices=self.actuated_joint_ids,
+            controlMode=p.TORQUE_CONTROL,
+            forces=torques
+        )
 
     def step_simulation(self):
         """Advances the simulation by one time step."""
